@@ -1,6 +1,7 @@
 package com.example.lang
 
 import com.example.lang.data.local.ReviewStateEntity
+import com.example.lang.domain.ReviewGrade
 import com.example.lang.domain.ReviewScheduler
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -9,10 +10,10 @@ import org.junit.Test
 
 class ReviewSchedulerTest {
     @Test
-    fun correctAnswerSchedulesFirstReviewForTomorrow() {
+    fun goodAnswerSchedulesFirstReviewForTomorrow() {
         val result = ReviewScheduler.schedule(
             current = ReviewStateEntity(cardId = "a"),
-            correct = true,
+            grade = ReviewGrade.Good,
             todayEpochDay = 100,
         )
 
@@ -20,24 +21,37 @@ class ReviewSchedulerTest {
         assertEquals(1, result.intervalDays)
         assertEquals(101, result.dueAtEpochDay)
         assertEquals(1, result.correctCount)
+        assertEquals(5.1, result.difficulty, 0.01)
         assertFalse(result.learned)
     }
 
     @Test
-    fun repeatedCorrectAnswersMarkCardLearned() {
-        val first = ReviewScheduler.schedule(ReviewStateEntity(cardId = "a"), true, 100)
-        val second = ReviewScheduler.schedule(first, true, 101)
+    fun repeatedGoodAnswersMarkCardLearned() {
+        val first = ReviewScheduler.schedule(ReviewStateEntity(cardId = "a"), ReviewGrade.Good, 100)
+        val second = ReviewScheduler.schedule(first, ReviewGrade.Good, 101)
 
         assertTrue(second.learned)
-        assertEquals(3, second.intervalDays)
-        assertEquals(104, second.dueAtEpochDay)
+        assertTrue(second.stability >= first.stability)
+        assertTrue(second.dueAtEpochDay > 101)
     }
 
     @Test
-    fun wrongAnswerKeepsCardDueSoonAndNotLearned() {
+    fun easyAnswerIncreasesIntervalWithoutIncreasingDifficulty() {
+        val result = ReviewScheduler.schedule(
+            current = ReviewStateEntity(cardId = "a", stability = 1.0, difficulty = 5.0),
+            grade = ReviewGrade.Easy,
+            todayEpochDay = 100,
+        )
+
+        assertTrue(result.intervalDays >= 2)
+        assertTrue(result.difficulty <= 5.0)
+    }
+
+    @Test
+    fun againKeepsCardDueSoonAndNotLearned() {
         val result = ReviewScheduler.schedule(
             current = ReviewStateEntity(cardId = "a", correctCount = 2, learned = true),
-            correct = false,
+            grade = ReviewGrade.Again,
             todayEpochDay = 100,
         )
 

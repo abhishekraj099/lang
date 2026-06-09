@@ -3,12 +3,14 @@ package com.example.lang.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.lang.data.ChallengeSummary
 import com.example.lang.data.LearningRepository
 import com.example.lang.data.ProgressSummary
 import com.example.lang.data.local.FlashcardEntity
 import com.example.lang.data.local.ReviewCard
 import com.example.lang.data.preferences.UserPreferences
 import com.example.lang.data.preferences.UserPreferencesStore
+import com.example.lang.domain.ReviewGrade
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -42,6 +44,18 @@ class LangViewModel(
         initialValue = emptyList(),
     )
 
+    val challengeSummary: StateFlow<ChallengeSummary> = repository.observeChallengeSummary().stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = ChallengeSummary(),
+    )
+
+    val allCards: StateFlow<List<FlashcardEntity>> = repository.observeAllCards().stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptyList(),
+    )
+
     init {
         viewModelScope.launch {
             repository.seedIfNeeded()
@@ -55,9 +69,27 @@ class LangViewModel(
             initialValue = emptyList(),
         )
 
-    fun completeOnboarding(dailyGoalMinutes: Int) {
+    fun quizCardsForLesson(lessonId: String): StateFlow<List<FlashcardEntity>> =
+        repository.observeInterleavedCardsForLesson(lessonId).stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList(),
+        )
+
+    fun completeOnboarding(
+        dailyGoalMinutes: Int,
+        learningGoal: String,
+        placementLevel: String,
+        displayName: String,
+    ) {
         viewModelScope.launch {
-            preferencesStore.completeOnboarding(dailyGoalMinutes)
+            preferencesStore.completeOnboarding(dailyGoalMinutes, learningGoal, placementLevel, displayName)
+        }
+    }
+
+    fun setNotificationsEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesStore.setNotificationsEnabled(enabled)
         }
     }
 
@@ -67,9 +99,15 @@ class LangViewModel(
         }
     }
 
-    fun recordReview(cardId: String, correct: Boolean) {
+    fun recordReview(cardId: String, grade: ReviewGrade) {
         viewModelScope.launch {
-            repository.recordReview(cardId, correct)
+            repository.recordReview(cardId, grade)
+        }
+    }
+
+    fun completeDailyChallenge(correctAnswers: Int, answered: Int) {
+        viewModelScope.launch {
+            repository.completeDailyChallenge(correctAnswers, answered)
         }
     }
 

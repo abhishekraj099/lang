@@ -1,17 +1,17 @@
 package com.example.lang
 
 import com.example.lang.data.SeedData
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SeedDataTest {
     @Test
     fun seedContentIncludesJapaneseStarterPack() {
-        assertEquals(4, SeedData.lessons.size)
-        assertTrue(SeedData.flashcards.size >= 15)
-        assertTrue(SeedData.flashcards.any { it.frontText == "あ" && it.backText == "a" })
+        assertTrue(SeedData.lessons.size >= 10)
+        assertTrue(SeedData.flashcards.size >= 50)
+        assertTrue(SeedData.flashcards.any { it.frontText == "\u3042" && it.backText == "a" })
         assertTrue(SeedData.flashcards.any { it.lessonId == "greetings" })
+        assertTrue(SeedData.flashcards.any { it.lessonId == "particles-wa-o" })
     }
 
     @Test

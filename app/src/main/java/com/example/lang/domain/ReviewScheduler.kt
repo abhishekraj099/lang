@@ -1,42 +1,53 @@
 package com.example.lang.domain
 
 import com.example.lang.data.local.ReviewStateEntity
+import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 object ReviewScheduler {
     fun schedule(
         current: ReviewStateEntity,
-        correct: Boolean,
+        grade: ReviewGrade,
         todayEpochDay: Long,
     ): ReviewStateEntity {
-        if (!correct) {
-            return current.copy(
-                easeFactor = max(1.3, current.easeFactor - 0.2),
-                intervalDays = 1,
-                reviewCount = current.reviewCount + 1,
-                dueAtEpochDay = todayEpochDay + 1,
-                lastReviewedEpochDay = todayEpochDay,
-                wrongCount = current.wrongCount + 1,
-                learned = false,
-            )
+        val daysSinceReview = current.lastReviewedEpochDay
+            ?.let { max(0.0, (todayEpochDay - it).toDouble()) }
+            ?: 0.0
+        val retrievability = if (current.stability <= 0.0) {
+            1.0
+        } else {
+            exp(-daysSinceReview / current.stability).coerceIn(0.0, 1.0)
         }
 
-        val nextInterval = when (current.reviewCount) {
-            0 -> 1
-            1 -> 3
-            else -> max(4, (current.intervalDays * current.easeFactor).roundToInt())
+        val gradeOffset = grade.value - 3
+        val nextDifficulty = (current.difficulty + 0.1 - gradeOffset * (0.08 + gradeOffset * 0.02))
+            .coerceIn(1.0, 10.0)
+        val nextStability = when (grade) {
+            ReviewGrade.Again -> 0.2
+            ReviewGrade.Hard -> max(0.5, current.stability * 0.8)
+            ReviewGrade.Good -> max(1.0, current.stability * (1.0 + 2.5 * (1.0 - retrievability)))
+            ReviewGrade.Easy -> max(2.0, current.stability * (1.0 + 3.5 * (1.0 - retrievability)))
         }
-        val nextEase = max(1.3, current.easeFactor + 0.1)
+        val intervalDays = when (grade) {
+            ReviewGrade.Again -> 1
+            ReviewGrade.Hard -> max(1, nextStability.roundToInt())
+            ReviewGrade.Good -> max(1, nextStability.roundToInt())
+            ReviewGrade.Easy -> max(2, nextStability.roundToInt())
+        }
 
         return current.copy(
-            easeFactor = nextEase,
-            intervalDays = nextInterval,
+            difficulty = nextDifficulty,
+            stability = nextStability,
+            retrievability = exp(-1.0 / nextStability).coerceIn(0.0, 1.0),
+            easeFactor = (11.0 - nextDifficulty).coerceIn(1.3, 3.0),
+            intervalDays = intervalDays,
             reviewCount = current.reviewCount + 1,
-            dueAtEpochDay = todayEpochDay + nextInterval,
+            dueAtEpochDay = todayEpochDay + intervalDays,
             lastReviewedEpochDay = todayEpochDay,
-            correctCount = current.correctCount + 1,
-            learned = current.correctCount + 1 >= 2,
+            correctCount = if (grade == ReviewGrade.Again) current.correctCount else current.correctCount + 1,
+            wrongCount = if (grade == ReviewGrade.Again) current.wrongCount + 1 else current.wrongCount,
+            learned = grade != ReviewGrade.Again && current.correctCount + 1 >= 2,
         )
     }
 }

@@ -5,7 +5,7 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "lessons")
+@Entity(tableName = "lessons", indices = [Index("orderIndex"), Index("type")])
 data class LessonEntity(
     @PrimaryKey val id: String,
     val title: String,
@@ -16,7 +16,11 @@ data class LessonEntity(
 
 @Entity(
     tableName = "flashcards",
-    indices = [Index("lessonId")],
+    indices = [
+        Index("lessonId"),
+        Index("category"),
+        Index(value = ["lessonId", "category"]),
+    ],
     foreignKeys = [
         ForeignKey(
             entity = LessonEntity::class,
@@ -37,10 +41,20 @@ data class FlashcardEntity(
     val orderIndex: Int,
 )
 
-@Entity(tableName = "review_states")
+@Entity(
+    tableName = "review_states",
+    indices = [
+        Index("dueAtEpochDay"),
+        Index("learned"),
+        Index(value = ["dueAtEpochDay", "learned"]),
+    ],
+)
 data class ReviewStateEntity(
     @PrimaryKey val cardId: String,
     val easeFactor: Double = 2.5,
+    val difficulty: Double = 5.0,
+    val stability: Double = 1.0,
+    val retrievability: Double = 1.0,
     val intervalDays: Int = 0,
     val reviewCount: Int = 0,
     val dueAtEpochDay: Long = 0,
@@ -64,4 +78,13 @@ data class DailySessionEntity(
     val cardsReviewed: Int = 0,
     val lessonsCompleted: Int = 0,
     val minutesSpent: Int = 0,
+)
+
+@Entity(tableName = "daily_challenges")
+data class DailyChallengeEntity(
+    @PrimaryKey val dateEpochDay: Long,
+    val score: Int,
+    val correctAnswers: Int,
+    val answered: Int,
+    val completed: Boolean,
 )

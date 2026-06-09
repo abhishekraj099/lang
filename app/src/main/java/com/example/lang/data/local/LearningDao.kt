@@ -33,6 +33,33 @@ interface LessonDao {
 
     @Query("SELECT * FROM flashcards WHERE lessonId = :lessonId ORDER BY orderIndex")
     fun observeCardsForLesson(lessonId: String): Flow<List<FlashcardEntity>>
+
+    @Query("SELECT * FROM flashcards ORDER BY lessonId, orderIndex")
+    fun observeAllCards(): Flow<List<FlashcardEntity>>
+
+    @Query(
+        """
+        SELECT mixed.* FROM (
+            SELECT flashcards.* FROM flashcards
+            WHERE lessonId = :lessonId
+            ORDER BY orderIndex
+            LIMIT :currentLimit
+        ) AS mixed
+        UNION
+        SELECT recent.* FROM (
+            SELECT flashcards.* FROM flashcards
+            INNER JOIN lessons ON lessons.id = flashcards.lessonId
+            WHERE flashcards.lessonId != :lessonId
+            ORDER BY lessons.orderIndex DESC, flashcards.orderIndex
+            LIMIT :reviewLimit
+        ) AS recent
+        """,
+    )
+    fun observeInterleavedCards(
+        lessonId: String,
+        currentLimit: Int,
+        reviewLimit: Int,
+    ): Flow<List<FlashcardEntity>>
 }
 
 @Dao
@@ -53,13 +80,14 @@ interface ProgressDao {
         """
         SELECT flashcards.id AS cardId, flashcards.lessonId, flashcards.category, flashcards.frontText,
             flashcards.backText, flashcards.reading, flashcards.example, review_states.easeFactor,
+            review_states.difficulty, review_states.stability, review_states.retrievability,
             review_states.intervalDays, review_states.reviewCount, review_states.dueAtEpochDay,
             review_states.lastReviewedEpochDay, review_states.correctCount, review_states.wrongCount,
             review_states.learned
         FROM flashcards
         INNER JOIN review_states ON review_states.cardId = flashcards.id
         WHERE review_states.dueAtEpochDay <= :todayEpochDay
-        ORDER BY review_states.dueAtEpochDay, flashcards.orderIndex
+        ORDER BY review_states.dueAtEpochDay, review_states.difficulty DESC, flashcards.orderIndex
         LIMIT :limit
         """,
     )
@@ -74,6 +102,12 @@ interface ProgressDao {
     @Query("SELECT COALESCE(SUM(xpEarned), 0) FROM daily_sessions")
     fun observeTotalXp(): Flow<Int>
 
+    @Query("SELECT COALESCE(SUM(cardsReviewed), 0) FROM daily_sessions")
+    fun observeTotalCardsReviewed(): Flow<Int>
+
+    @Query("SELECT COALESCE(SUM(minutesSpent), 0) FROM daily_sessions")
+    fun observeTotalMinutes(): Flow<Int>
+
     @Query("SELECT * FROM daily_sessions ORDER BY dateEpochDay DESC")
     fun observeSessions(): Flow<List<DailySessionEntity>>
 
@@ -85,4 +119,13 @@ interface ProgressDao {
 
     @Query("SELECT COUNT(*) FROM lesson_progress WHERE completed = 1")
     fun observeCompletedLessonCount(): Flow<Int>
+
+    @Query("SELECT * FROM daily_challenges ORDER BY dateEpochDay DESC")
+    fun observeDailyChallenges(): Flow<List<DailyChallengeEntity>>
+
+    @Query("SELECT * FROM daily_challenges WHERE dateEpochDay = :dateEpochDay")
+    suspend fun getDailyChallenge(dateEpochDay: Long): DailyChallengeEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertDailyChallenge(challenge: DailyChallengeEntity)
 }
