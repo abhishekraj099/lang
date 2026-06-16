@@ -9,6 +9,7 @@ import com.example.lang.data.local.LessonWithProgress
 import com.example.lang.data.local.ProgressDao
 import com.example.lang.data.local.ReviewCard
 import com.example.lang.data.local.ReviewStateEntity
+import com.example.lang.data.local.SyncOutboxEntity
 import com.example.lang.domain.Achievement
 import com.example.lang.domain.AchievementEvaluator
 import com.example.lang.domain.ChallengeCalculator
@@ -21,6 +22,7 @@ import com.example.lang.domain.ReviewScheduler
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import java.util.UUID
 
 data class ProgressSummary(
     val totalXp: Int = 0,
@@ -33,6 +35,7 @@ data class ProgressSummary(
     val achievements: List<Achievement> = emptyList(),
     val totalMinutes: Int = 0,
     val recentActiveDays: List<Long> = emptyList(),
+    val pendingSyncCount: Int = 0,
 )
 
 data class ChallengeSummary(
@@ -81,6 +84,7 @@ class LearningRepository(
         progressDao.observeTotalCardsReviewed(),
         lessonDao.observeLessons(),
         progressDao.observeTotalMinutes(),
+        progressDao.observePendingSyncCount(),
     ) { values ->
         val totalXp = values[0] as Int
         val learnedWords = values[1] as Int
@@ -92,6 +96,7 @@ class LearningRepository(
         @Suppress("UNCHECKED_CAST")
         val lessons = values[6] as List<LessonWithProgress>
         val totalMinutes = values[7] as Int
+        val pendingSyncCount = values[8] as Int
         val streak = ProgressCalculator.currentStreak(sessions, todayEpochDay())
         ProgressSummary(
             totalXp = totalXp,
@@ -114,6 +119,7 @@ class LearningRepository(
                 .filter { it.xpEarned > 0 || it.cardsReviewed > 0 || it.lessonsCompleted > 0 }
                 .take(7)
                 .map { it.dateEpochDay },
+            pendingSyncCount = pendingSyncCount,
         )
     }
 
@@ -132,6 +138,10 @@ class LearningRepository(
             ),
         )
         incrementToday(xp = 20, lessons = 1, minutes = 5)
+        enqueueSync(
+            eventType = "lesson_completed",
+            payloadJson = """{"lessonId":"${lessonId.escapeJson()}","completedAtEpochDay":$today,"xp":20}""",
+        )
     }
 
     suspend fun recordReview(cardId: String, grade: ReviewGrade) {
@@ -144,6 +154,10 @@ class LearningRepository(
             ),
         )
         incrementToday(xp = xpForGrade(grade), cards = 1, minutes = 1)
+        enqueueSync(
+            eventType = "review_recorded",
+            payloadJson = """{"cardId":"${cardId.escapeJson()}","grade":"${grade.name}","reviewedAtEpochDay":${todayEpochDay()}}""",
+        )
     }
 
     suspend fun completeDailyChallenge(correctAnswers: Int, answered: Int) {
@@ -159,6 +173,10 @@ class LearningRepository(
             ),
         )
         incrementToday(xp = score, cards = answered, minutes = 1)
+        enqueueSync(
+            eventType = "daily_challenge_completed",
+            payloadJson = """{"dateEpochDay":$today,"score":$score,"correctAnswers":$correctAnswers,"answered":$answered}""",
+        )
     }
 
     private fun Flow<List<DailyChallengeEntity>>.combineWithToday(): Flow<ChallengeSummary> =
@@ -180,6 +198,19 @@ class LearningRepository(
         ReviewGrade.Good -> 10
         ReviewGrade.Easy -> 14
     }
+
+    private suspend fun enqueueSync(eventType: String, payloadJson: String) {
+        progressDao.enqueueSyncEvent(
+            SyncOutboxEntity(
+                id = UUID.randomUUID().toString(),
+                eventType = eventType,
+                payloadJson = payloadJson,
+                createdAtEpochMillis = System.currentTimeMillis(),
+            ),
+        )
+    }
+
+    private fun String.escapeJson(): String = replace("\\", "\\\\").replace("\"", "\\\"")
 
     private suspend fun incrementToday(
         xp: Int,

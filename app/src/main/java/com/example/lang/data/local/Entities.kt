@@ -88,3 +88,12 @@ data class DailyChallengeEntity(
     val answered: Int,
     val completed: Boolean,
 )
+
+@Entity(tableName = "sync_outbox", indices = [Index("synced"), Index("createdAtEpochMillis")])
+data class SyncOutboxEntity(
+    @PrimaryKey val id: String,
+    val eventType: String,
+    val payloadJson: String,
+    val createdAtEpochMillis: Long,
+    val synced: Boolean = false,
+)

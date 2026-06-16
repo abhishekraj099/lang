@@ -16,8 +16,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LessonProgressEntity::class,
         DailySessionEntity::class,
         DailyChallengeEntity::class,
+        SyncOutboxEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -58,10 +59,28 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS sync_outbox (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        eventType TEXT NOT NULL,
+                        payloadJson TEXT NOT NULL,
+                        createdAtEpochMillis INTEGER NOT NULL,
+                        synced INTEGER NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_sync_outbox_synced ON sync_outbox(synced)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_sync_outbox_createdAtEpochMillis ON sync_outbox(createdAtEpochMillis)")
+            }
+        }
+
         fun create(context: Context): AppDatabase = Room.databaseBuilder(
             context.applicationContext,
             AppDatabase::class.java,
             "lang.db",
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
     }
 }

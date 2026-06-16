@@ -128,4 +128,16 @@ interface ProgressDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertDailyChallenge(challenge: DailyChallengeEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun enqueueSyncEvent(event: SyncOutboxEntity)
+
+    @Query("SELECT * FROM sync_outbox WHERE synced = 0 ORDER BY createdAtEpochMillis LIMIT :limit")
+    suspend fun getPendingSyncEvents(limit: Int): List<SyncOutboxEntity>
+
+    @Query("SELECT COUNT(*) FROM sync_outbox WHERE synced = 0")
+    fun observePendingSyncCount(): Flow<Int>
+
+    @Query("UPDATE sync_outbox SET synced = 1 WHERE id IN (:ids)")
+    suspend fun markSyncEventsUploaded(ids: List<String>)
 }

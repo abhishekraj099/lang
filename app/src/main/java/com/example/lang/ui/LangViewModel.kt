@@ -1,15 +1,21 @@
 package com.example.lang.ui
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.lang.data.ChallengeSummary
 import com.example.lang.data.LearningRepository
 import com.example.lang.data.ProgressSummary
+import com.example.lang.data.auth.AuthRepository
+import com.example.lang.data.auth.AuthUser
 import com.example.lang.data.local.FlashcardEntity
 import com.example.lang.data.local.ReviewCard
 import com.example.lang.data.preferences.UserPreferences
 import com.example.lang.data.preferences.UserPreferencesStore
+import com.example.lang.data.preferences.ThemeMode
 import com.example.lang.domain.ReviewGrade
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -19,7 +25,20 @@ import kotlinx.coroutines.launch
 class LangViewModel(
     private val repository: LearningRepository,
     private val preferencesStore: UserPreferencesStore,
+    private val authRepository: AuthRepository,
 ) : ViewModel() {
+    var authUser: AuthUser? by mutableStateOf(authRepository.currentUser)
+        private set
+
+    var authLoading: Boolean by mutableStateOf(false)
+        private set
+
+    var authError: String? by mutableStateOf(null)
+        private set
+
+    var guestMode: Boolean by mutableStateOf(false)
+        private set
+
     val preferences: StateFlow<UserPreferences> = preferencesStore.preferences.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -60,6 +79,11 @@ class LangViewModel(
         viewModelScope.launch {
             repository.seedIfNeeded()
         }
+        viewModelScope.launch {
+            authRepository.observeAuthUser().collect { user ->
+                authUser = user
+            }
+        }
     }
 
     fun cardsForLesson(lessonId: String): StateFlow<List<FlashcardEntity>> =
@@ -93,6 +117,12 @@ class LangViewModel(
         }
     }
 
+    fun setThemeMode(themeMode: ThemeMode) {
+        viewModelScope.launch {
+            preferencesStore.setThemeMode(themeMode)
+        }
+    }
+
     fun completeLesson(lessonId: String) {
         viewModelScope.launch {
             repository.completeLesson(lessonId)
@@ -111,14 +141,68 @@ class LangViewModel(
         }
     }
 
+    fun continueAsGuest() {
+        guestMode = true
+        authError = null
+    }
+
+    fun signIn(email: String, password: String) {
+        viewModelScope.launch {
+            authLoading = true
+            authError = null
+            runCatching { authRepository.signIn(email.trim(), password) }
+                .onSuccess {
+                    authUser = it
+                    guestMode = false
+                }
+                .onFailure { authError = it.message ?: "Unable to sign in." }
+            authLoading = false
+        }
+    }
+
+    fun signInWithGoogle(idToken: String) {
+        viewModelScope.launch {
+            authLoading = true
+            authError = null
+            runCatching { authRepository.signInWithGoogle(idToken) }
+                .onSuccess {
+                    authUser = it
+                    guestMode = false
+                }
+                .onFailure { authError = it.message ?: "Unable to sign in with Google." }
+            authLoading = false
+        }
+    }
+
+    fun signUp(email: String, password: String, displayName: String) {
+        viewModelScope.launch {
+            authLoading = true
+            authError = null
+            runCatching { authRepository.signUp(email.trim(), password, displayName.trim()) }
+                .onSuccess {
+                    authUser = it
+                    guestMode = false
+                }
+                .onFailure { authError = it.message ?: "Unable to create account." }
+            authLoading = false
+        }
+    }
+
+    fun signOut() {
+        authRepository.signOut()
+        authUser = null
+        guestMode = false
+    }
+
     companion object {
         fun factory(
             repository: LearningRepository,
             preferencesStore: UserPreferencesStore,
+            authRepository: AuthRepository,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return LangViewModel(repository, preferencesStore) as T
+                return LangViewModel(repository, preferencesStore, authRepository) as T
             }
         }
     }

@@ -19,7 +19,19 @@ data class UserPreferences(
     val placementLevel: String = "Absolute beginner",
     val displayName: String = "Guest Learner",
     val notificationsEnabled: Boolean = true,
+    val themeMode: String = ThemeMode.System.value,
 )
+
+enum class ThemeMode(val value: String, val label: String) {
+    System("system", "System"),
+    Light("light", "Light"),
+    Dark("dark", "Dark");
+
+    companion object {
+        fun fromValue(value: String): ThemeMode =
+            entries.firstOrNull { it.value == value } ?: System
+    }
+}
 
 class UserPreferencesStore(private val context: Context) {
     val preferences: Flow<UserPreferences> = context.userDataStore.data.map { values ->
@@ -31,6 +43,7 @@ class UserPreferencesStore(private val context: Context) {
             placementLevel = values[PLACEMENT_LEVEL] ?: "Absolute beginner",
             displayName = values[DISPLAY_NAME] ?: "Guest Learner",
             notificationsEnabled = values[NOTIFICATIONS_ENABLED] ?: true,
+            themeMode = values[THEME_MODE] ?: ThemeMode.System.value,
         )
     }
 
@@ -56,6 +69,12 @@ class UserPreferencesStore(private val context: Context) {
         }
     }
 
+    suspend fun setThemeMode(themeMode: ThemeMode) {
+        context.userDataStore.edit { values ->
+            values[THEME_MODE] = themeMode.value
+        }
+    }
+
     companion object {
         private val ONBOARDING_COMPLETE = booleanPreferencesKey("onboarding_complete")
         private val SELECTED_LANGUAGE = stringPreferencesKey("selected_language")
@@ -64,5 +83,6 @@ class UserPreferencesStore(private val context: Context) {
         private val PLACEMENT_LEVEL = stringPreferencesKey("placement_level")
         private val DISPLAY_NAME = stringPreferencesKey("display_name")
         private val NOTIFICATIONS_ENABLED = booleanPreferencesKey("notifications_enabled")
+        private val THEME_MODE = stringPreferencesKey("theme_mode")
     }
 }

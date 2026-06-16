@@ -1,12 +1,17 @@
 package com.example.lang
 
+import android.app.Activity
+import android.content.Context
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,6 +26,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -45,6 +52,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
@@ -63,25 +71,37 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.example.lang.data.preferences.ThemeMode
 import com.example.lang.data.local.FlashcardEntity
 import com.example.lang.data.local.LessonWithProgress
 import com.example.lang.data.local.ReviewCard
 import com.example.lang.domain.ReviewGrade
 import com.example.lang.ui.LangViewModel
 import com.example.lang.ui.theme.LangTheme
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private val viewModel: LangViewModel by viewModels {
         val container = (application as LangApplication).container
-        LangViewModel.factory(container.learningRepository, container.preferencesStore)
+        LangViewModel.factory(container.learningRepository, container.preferencesStore, container.authRepository)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            LangTheme {
+            val preferences by viewModel.preferences.collectAsState()
+            val systemDark = isSystemInDarkTheme()
+            val darkTheme = when (ThemeMode.fromValue(preferences.themeMode)) {
+                ThemeMode.System -> systemDark
+                ThemeMode.Light -> false
+                ThemeMode.Dark -> true
+            }
+            LangTheme(darkTheme = darkTheme) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     LangApp(viewModel)
                 }
@@ -93,11 +113,180 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun LangApp(viewModel: LangViewModel) {
     val preferences by viewModel.preferences.collectAsState()
-    if (!preferences.onboardingComplete) {
-        OnboardingScreen(onComplete = viewModel::completeOnboarding)
-    } else {
-        MainNavigation(viewModel)
+    var showSplash by remember { mutableStateOf(true) }
+
+    LaunchedEffect(Unit) {
+        delay(1_500)
+        showSplash = false
     }
+
+    when {
+        showSplash -> SplashScreen()
+        viewModel.authUser != null || viewModel.guestMode -> MainNavigation(viewModel)
+        !preferences.onboardingComplete -> OnboardingScreen(onComplete = viewModel::completeOnboarding)
+        else -> AuthScreen(viewModel)
+    }
+}
+
+@Composable
+private fun SplashScreen() {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("🌐", fontSize = 72.sp)
+        Spacer(Modifier.height(12.dp))
+        Text("LinguaPath", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        Text("Free forever. Learn at your own pace.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun AuthScreen(viewModel: LangViewModel) {
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var displayName by remember { mutableStateOf("") }
+    var signUpMode by remember { mutableStateOf(false) }
+    var googleError by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val googleClientId = remember(context) { context.googleWebClientIdOrNull() }
+    val googleSignInClient = remember(googleClientId) {
+        googleClientId?.let {
+            val options = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                .requestEmail()
+                .requestIdToken(it)
+                .build()
+            GoogleSignIn.getClient(context, options)
+        }
+    }
+    val googleLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        googleError = null
+        if (result.resultCode != Activity.RESULT_OK || result.data == null) {
+            googleError = "Google sign-in was cancelled."
+            return@rememberLauncherForActivityResult
+        }
+
+        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+        runCatching { task.getResult(ApiException::class.java) }
+            .onSuccess { account ->
+                val idToken = account.idToken
+                if (idToken.isNullOrBlank()) {
+                    googleError = "Google account returned no ID token. Check Firebase Google Sign-In setup."
+                } else {
+                    viewModel.signInWithGoogle(idToken)
+                }
+            }
+            .onFailure { error ->
+                googleError = error.message ?: "Unable to sign in with Google."
+            }
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(24.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item {
+            Text("Welcome to LinguaPath", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text("Sign in to sync progress, or continue offline as a guest.")
+        }
+        if (signUpMode) {
+            item {
+                OutlinedTextField(
+                    value = displayName,
+                    onValueChange = { displayName = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Name") },
+                )
+            }
+        }
+        item {
+            OutlinedTextField(
+                value = email,
+                onValueChange = { email = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Email") },
+            )
+        }
+        item {
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Password") },
+            )
+        }
+        item {
+            Button(
+                onClick = {
+                    googleError = null
+                    googleSignInClient?.signInIntent?.let(googleLauncher::launch)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !viewModel.authLoading && googleSignInClient != null,
+            ) {
+                Text("Continue with Google")
+            }
+        }
+        if (googleSignInClient == null) {
+            item {
+                Text(
+                    "Google Sign-In is not configured yet. Add a web client ID in Firebase Auth to enable it.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        googleError?.let { error ->
+            item {
+                Text(error, color = MaterialTheme.colorScheme.error)
+            }
+        }
+        viewModel.authError?.let { error ->
+            item {
+                Text(error, color = MaterialTheme.colorScheme.error)
+            }
+        }
+        item {
+            Button(
+                onClick = {
+                    if (signUpMode) {
+                        viewModel.signUp(email, password, displayName)
+                    } else {
+                        viewModel.signIn(email, password)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !viewModel.authLoading && email.isNotBlank() && password.length >= 6,
+            ) {
+                Text(if (signUpMode) "Create account" else "Sign in")
+            }
+        }
+        item {
+            OutlinedButton(
+                onClick = { signUpMode = !signUpMode },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (signUpMode) "I already have an account" else "Create a new account")
+            }
+        }
+        item {
+            OutlinedButton(
+                onClick = viewModel::continueAsGuest,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Continue as guest")
+            }
+        }
+    }
+}
+
+private fun Context.googleWebClientIdOrNull(): String? {
+    val resId = resources.getIdentifier("default_web_client_id", "string", packageName)
+    return if (resId == 0) null else getString(resId)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -165,7 +354,10 @@ private fun MainNavigation(viewModel: LangViewModel) {
                 ProgressScreen(viewModel)
             }
             composable("profile") {
-                ProfileScreen(viewModel)
+                ProfileScreen(viewModel, navController)
+            }
+            composable("settings") {
+                SettingsScreen(viewModel)
             }
             composable("leaderboard") {
                 LeaderboardScreen(viewModel)
@@ -195,84 +387,148 @@ private fun OnboardingScreen(onComplete: (Int, String, String, String) -> Unit) 
     var learningGoal by remember { mutableStateOf("Travel") }
     var placementLevel by remember { mutableStateOf("Absolute beginner") }
     var displayName by remember { mutableStateOf("") }
-    LazyColumn(
+    val pagerState = rememberPagerState(pageCount = { 3 })
+    val scope = rememberCoroutineScope()
+
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        item {
-            Text("Learn Japanese from zero", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            Text("Build scripts, words, and review habits with short daily lessons.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        item {
-            OutlinedTextField(
-                value = displayName,
-                onValueChange = { displayName = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("Username") },
-                placeholder = { Text("Guest Learner") },
-            )
-        }
-        item {
-            OutlinedCard(shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("First language", style = MaterialTheme.typography.titleMedium)
-                    Text("Japanese", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                    Text("Hiragana, greetings, numbers, and daily words are included in this first pack.")
-                }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            OutlinedButton(onClick = { onComplete(goal, learningGoal, placementLevel, displayName) }) {
+                Text("Skip")
             }
         }
-        item {
-            Text("Learning goal", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                listOf("Travel", "Anime", "JLPT").forEach { goalName ->
-                    GoalChip(
-                        minutes = 0,
-                        selected = learningGoal == goalName,
-                        onClick = { learningGoal = goalName },
-                        label = goalName,
-                    )
+
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.weight(1f),
+        ) { page ->
+            when (page) {
+                0 -> Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text("Learn Japanese, Korean, French or English", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                    Spacer(Modifier.height(12.dp))
+                    Text("Start exactly where you belong with a placement test and free lessons.", color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                 }
-            }
-        }
-        item {
-            Text("Adaptive placement", style = MaterialTheme.typography.titleMedium)
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Quick check: what does おちゃ mean?")
-                listOf(
-                    "Absolute beginner" to "I do not know yet",
-                    "Some basics" to "Tea",
-                    "Ready for grammar" to "I can read it and know it means tea",
-                ).forEach { (level, answer) ->
-                    OutlinedButton(
-                        onClick = { placementLevel = level },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("${if (placementLevel == level) "[x]" else "[ ]"} $answer")
+
+                1 -> Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text("Take a placement test", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                    Spacer(Modifier.height(12.dp))
+                    Text("We detect your level so you can skip beginner material you already know.", color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                }
+
+                2 -> LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    item {
+                        Text("Track progress, build streaks, earn XP — all free", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                    }
+                    item {
+                        OutlinedTextField(
+                            value = displayName,
+                            onValueChange = { displayName = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Display name") },
+                            placeholder = { Text("Guest Learner") },
+                        )
+                    }
+                    item {
+                        Text("Learning goal", style = MaterialTheme.typography.titleMedium)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            listOf("Travel", "Anime", "JLPT").forEach { goalName ->
+                                GoalChip(
+                                    minutes = 0,
+                                    selected = learningGoal == goalName,
+                                    onClick = { learningGoal = goalName },
+                                    label = goalName,
+                                )
+                            }
+                        }
+                    }
+                    item {
+                        Text("Adaptive placement", style = MaterialTheme.typography.titleMedium)
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Quick check: what does おちゃ mean?")
+                            listOf(
+                                "Absolute beginner" to "I do not know yet",
+                                "Some basics" to "Tea",
+                                "Ready for grammar" to "I can read it and know it means tea",
+                            ).forEach { (level, answer) ->
+                                OutlinedButton(
+                                    onClick = { placementLevel = level },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text("${if (placementLevel == level) "[x]" else "[ ]"} $answer")
+                                }
+                            }
+                        }
+                    }
+                    item {
+                        Text("Daily goal", style = MaterialTheme.typography.titleMedium)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(5, 10, 15, 20).forEach { minutes ->
+                                GoalChip(
+                                    minutes = minutes,
+                                    selected = goal == minutes,
+                                    onClick = { goal = minutes },
+                                )
+                            }
+                        }
+                    }
+                    item {
+                        Button(
+                            onClick = { onComplete(goal, learningGoal, placementLevel, displayName) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Start learning")
+                        }
                     }
                 }
             }
         }
-        item {
-            Text("Daily goal", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(5, 10, 15, 20).forEach { minutes ->
-                    GoalChip(
-                        minutes = minutes,
-                        selected = goal == minutes,
-                        onClick = { goal = minutes },
-                    )
-                }
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            repeat(3) { index ->
+                val selected = pagerState.currentPage == index
+                Surface(
+                    modifier = Modifier
+                        .padding(horizontal = 4.dp)
+                        .size(if (selected) 10.dp else 8.dp),
+                    shape = RoundedCornerShape(50),
+                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                ) {}
             }
         }
-        item {
-            Button(
-                onClick = { onComplete(goal, learningGoal, placementLevel, displayName) },
-                modifier = Modifier.fillMaxWidth(),
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            OutlinedButton(
+                onClick = { scope.launch { pagerState.animateScrollToPage((pagerState.currentPage - 1).coerceAtLeast(0)) } },
+                enabled = pagerState.currentPage > 0,
             ) {
-                Text("Start learning")
+                Text("Back")
+            }
+            Button(
+                onClick = {
+                    if (pagerState.currentPage < 2) {
+                        scope.launch { pagerState.animateScrollToPage((pagerState.currentPage + 1).coerceAtMost(2)) }
+                    } else {
+                        onComplete(goal, learningGoal, placementLevel, displayName)
+                    }
+                },
+            ) {
+                Text(if (pagerState.currentPage < 2) "Swipe to continue" else "Start learning")
             }
         }
     }
@@ -711,7 +967,7 @@ private fun DailyChallengeScreen(viewModel: LangViewModel) {
 }
 
 @Composable
-private fun ProfileScreen(viewModel: LangViewModel) {
+private fun ProfileScreen(viewModel: LangViewModel, navController: NavHostController) {
     val preferences by viewModel.preferences.collectAsState()
     val progress by viewModel.progress.collectAsState()
     val challenge by viewModel.challengeSummary.collectAsState()
@@ -725,6 +981,7 @@ private fun ProfileScreen(viewModel: LangViewModel) {
             Text("Profile", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text("${preferences.displayName} - Japanese learner")
             Text("${preferences.learningGoal} goal - ${preferences.placementLevel}")
+            Text(viewModel.authUser?.email ?: "Guest mode - local progress only")
         }
         item {
             OutlinedCard(shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -766,6 +1023,9 @@ private fun ProfileScreen(viewModel: LangViewModel) {
             }
         }
         item {
+            StatCard("Pending cloud sync", "${progress.pendingSyncCount} events", Modifier.fillMaxWidth())
+        }
+        item {
             OutlinedButton(
                 onClick = { viewModel.setNotificationsEnabled(!preferences.notificationsEnabled) },
                 modifier = Modifier.fillMaxWidth(),
@@ -774,8 +1034,83 @@ private fun ProfileScreen(viewModel: LangViewModel) {
             }
         }
         item {
-            Button(onClick = { }, modifier = Modifier.fillMaxWidth(), enabled = false) {
-                Text("Google sign in - backend phase")
+            Button(onClick = { navController.navigate("settings") }, modifier = Modifier.fillMaxWidth()) {
+                Text("Open settings")
+            }
+        }
+        item {
+            if (viewModel.authUser != null) {
+                OutlinedButton(onClick = viewModel::signOut, modifier = Modifier.fillMaxWidth()) {
+                    Text("Sign out")
+                }
+            } else {
+                Button(onClick = { }, modifier = Modifier.fillMaxWidth(), enabled = false) {
+                    Text("Google sign in - next provider")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsScreen(viewModel: LangViewModel) {
+    val preferences by viewModel.preferences.collectAsState()
+    val selectedTheme = ThemeMode.fromValue(preferences.themeMode)
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item {
+            Text("Settings", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text("Personalize app behavior and appearance.")
+        }
+        item {
+            OutlinedCard(shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Theme", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("Choose System for automatic day/night mode, or force Light/Dark.")
+                    ThemeMode.entries.forEach { mode ->
+                        OutlinedButton(
+                            onClick = { viewModel.setThemeMode(mode) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("${if (selectedTheme == mode) "[x]" else "[ ]"} ${mode.label}")
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            OutlinedCard(shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Notifications", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(if (preferences.notificationsEnabled) "Daily reminders are enabled." else "Daily reminders are disabled.")
+                    OutlinedButton(
+                        onClick = { viewModel.setNotificationsEnabled(!preferences.notificationsEnabled) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (preferences.notificationsEnabled) "Turn reminders off" else "Turn reminders on")
+                    }
+                }
+            }
+        }
+        item {
+            OutlinedCard(shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Account", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(viewModel.authUser?.email ?: "Signed in as local guest. Email sign-in is available from app start.")
+                    if (viewModel.authUser != null) {
+                        OutlinedButton(onClick = viewModel::signOut, modifier = Modifier.fillMaxWidth()) {
+                            Text("Sign out")
+                        }
+                    } else {
+                        Button(onClick = { }, modifier = Modifier.fillMaxWidth(), enabled = false) {
+                            Text("Connect Google account")
+                        }
+                    }
+                }
             }
         }
     }
