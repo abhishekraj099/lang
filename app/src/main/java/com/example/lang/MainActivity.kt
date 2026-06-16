@@ -34,6 +34,8 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FabPosition
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -58,6 +60,7 @@ import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
@@ -293,6 +296,9 @@ private fun Context.googleWebClientIdOrNull(): String? {
 @Composable
 private fun MainNavigation(viewModel: LangViewModel) {
     val navController = rememberNavController()
+    val lessons by viewModel.lessons.collectAsState()
+    val nextLesson = lessons.firstOrNull { !it.completed } ?: lessons.firstOrNull()
+    val learnRoute = nextLesson?.let { "learn/${it.id}" } ?: "review"
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(title = { Text("Lang") })
@@ -300,22 +306,54 @@ private fun MainNavigation(viewModel: LangViewModel) {
         bottomBar = {
             val entry by navController.currentBackStackEntryAsState()
             val route = entry?.destination?.route.orEmpty()
-            NavigationBar {
-                listOf(
-                    "home" to "Home",
-                    "challenge" to "Daily",
-                    "review" to "Review",
-                    "profile" to "Profile",
-                ).forEach { (destination, label) ->
-                    NavigationBarItem(
-                        selected = route.startsWith(destination),
-                        onClick = { navController.navigate(destination) { launchSingleTop = true } },
-                        icon = { Text(label.take(1)) },
-                        label = { Text(label) },
+            Surface(color = MaterialTheme.colorScheme.surface) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    BrandNavItem(
+                        modifier = Modifier.weight(1f),
+                        selected = route == "home",
+                        label = "Home",
+                        icon = "H",
+                        onClick = { navController.navigate("home") { launchSingleTop = true } },
+                    )
+                    BrandNavItem(
+                        modifier = Modifier.weight(1f),
+                        selected = route.startsWith("learn") || route.startsWith("quiz"),
+                        label = "Learn",
+                        icon = "D",
+                        onClick = { navController.navigate(learnRoute) { launchSingleTop = true } },
+                    )
+                    BrandNavItem(
+                        modifier = Modifier.weight(1f),
+                        selected = route == "leaderboard",
+                        label = "Ranks",
+                        icon = "R",
+                        onClick = { navController.navigate("leaderboard") { launchSingleTop = true } },
+                    )
+                    BrandNavItem(
+                        modifier = Modifier.weight(1f),
+                        selected = route == "profile",
+                        label = "You",
+                        icon = "Y",
+                        onClick = { navController.navigate("profile") { launchSingleTop = true } },
                     )
                 }
             }
         },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { navController.navigate("challenge") { launchSingleTop = true } },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+            ) {
+                Text("⚡", fontSize = 18.sp)
+            }
+        },
+        floatingActionButtonPosition = FabPosition.Center,
     ) { padding ->
         NavHost(
             navController = navController,
@@ -545,6 +583,7 @@ private fun GoalChip(minutes: Int, selected: Boolean, onClick: () -> Unit, label
 
 @Composable
 private fun HomeScreen(viewModel: LangViewModel, navController: NavHostController) {
+    val preferences by viewModel.preferences.collectAsState()
     val lessons by viewModel.lessons.collectAsState()
     val progress by viewModel.progress.collectAsState()
     val challenge by viewModel.challengeSummary.collectAsState()
@@ -552,69 +591,49 @@ private fun HomeScreen(viewModel: LangViewModel, navController: NavHostControlle
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(18.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Today", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("${progress.streak} day streak - ${progress.totalXp} XP - ${progress.dueCount} reviews due")
-                LinearProgressIndicator(
-                    progress = { (progress.completedLessons.toFloat() / lessons.size.coerceAtLeast(1)).coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Text("Weekly activity: ${activityHeatmap(progress.recentActiveDays)}")
-            }
+            Text("GOOD MORNING", color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 2.sp, fontSize = 11.sp)
+            Text(
+                preferences.displayName.ifBlank { "Learner" },
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        item {
+            HeroStreakCard(progress = progress)
         }
         if (nextLesson != null) {
             item {
-                LessonCard(
+                ContinueLessonCard(
                     lesson = nextLesson,
-                    primaryAction = "Start lesson",
+                    primaryAction = "GO",
                     onClick = { navController.navigate("learn/${nextLesson.id}") },
                 )
             }
         }
         item {
-            OutlinedCard(shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Today's challenge", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text(if (challenge.todayCompleted) "Completed: ${challenge.todayScore} points" else "20 questions in 1 minute")
-                    Button(onClick = { navController.navigate("challenge") }, modifier = Modifier.fillMaxWidth()) {
-                        Text(if (challenge.todayCompleted) "View challenge" else "Start challenge")
-                    }
-                }
-            }
+            ChallengeCard(
+                completed = challenge.todayCompleted,
+                score = challenge.todayScore,
+                onClick = { navController.navigate("challenge") },
+            )
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = { navController.navigate("review") }, modifier = Modifier.weight(1f)) {
-                    Text("Quick review")
-                }
-                OutlinedButton(onClick = { navController.navigate("studyTimer") }, modifier = Modifier.weight(1f)) {
-                    Text("Study timer")
-                }
+                StatCard("XP", progress.totalXp.toString(), Modifier.weight(1f))
+                StatCard("WORDS", progress.learnedWords.toString(), Modifier.weight(1f))
+                StatCard("TIME", "${progress.totalMinutes}h", Modifier.weight(1f))
             }
         }
         item {
-            Text("Modules", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    ModuleButton("Leaderboard", Modifier.weight(1f)) { navController.navigate("leaderboard") }
-                    ModuleButton("Weekly", Modifier.weight(1f)) { navController.navigate("weeklyChallenge") }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    ModuleButton("Kanji quiz", Modifier.weight(1f)) { navController.navigate("kanjiChallenge") }
-                    ModuleButton("Listening", Modifier.weight(1f)) { navController.navigate("listeningChallenge") }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    ModuleButton("Shadowing", Modifier.weight(1f)) { navController.navigate("shadowing") }
-                    ModuleButton("Profile", Modifier.weight(1f)) { navController.navigate("profile") }
-                }
-            }
+            Text("DAY'S CHALLENGE", color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 2.sp, fontSize = 11.sp)
+            Spacer(Modifier.height(4.dp))
         }
         item {
-            Text("Unit path", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("LESSONS", color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 2.sp, fontSize = 11.sp)
         }
         items(lessons) { lesson ->
             LessonCard(
@@ -633,6 +652,136 @@ private fun ModuleButton(label: String, modifier: Modifier = Modifier, onClick: 
     }
 }
 
+@Composable
+private fun BrandNavItem(
+    modifier: Modifier = Modifier,
+    selected: Boolean,
+    label: String,
+    icon: String,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Surface(
+            color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else Color.Transparent,
+            shape = RoundedCornerShape(999.dp),
+        ) {
+            Text(
+                text = icon,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        Text(
+            label,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun HeroStreakCard(progress: com.example.lang.data.ProgressSummary) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("DAY STREAK", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, letterSpacing = 2.sp)
+                Text(
+                    text = progress.streak.toString(),
+                    style = MaterialTheme.typography.displayMedium,
+                    fontWeight = FontWeight.Black,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("🔥", fontSize = 30.sp)
+                Text(
+                    text = "${progress.dueCount} / 10 MIN",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                )
+                LinearProgressIndicator(
+                    progress = { (progress.completedLessons.toFloat() / 10f).coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(0.6f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContinueLessonCard(lesson: LessonWithProgress, primaryAction: String, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)),
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("CONTINUE", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, letterSpacing = 2.sp)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.weight(1f)) {
+                    Text(lesson.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(lesson.description, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text(
+                    text = "$primaryAction →",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            LinearProgressIndicator(
+                progress = { if (lesson.completed) 1f else 0.45f },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChallengeCard(completed: Boolean, score: Int, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("⚡ TODAY'S CHALLENGE", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, letterSpacing = 2.sp)
+            Text(
+                text = if (completed) "Completed: $score XP" else "Match 10 N5 words in 60 sec",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = if (completed) "Come back tomorrow for a fresh run." else "23 hours left",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+                Text(if (completed) "View challenge" else "Start challenge")
+            }
+        }
+    }
+}
+
 private fun activityHeatmap(activeDays: List<Long>): String {
     val active = activeDays.sortedDescending().take(7).toSet()
     val latest = active.maxOrNull() ?: return ". . . . . . ."
@@ -647,8 +796,9 @@ private fun LessonCard(lesson: LessonWithProgress, primaryAction: String, onClic
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

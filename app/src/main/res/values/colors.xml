@@ -1,10 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Japanese Indigo (藍色) Palette -->
+    <color name="japanese_indigo_dark">#FF0F2942</color>
+    <color name="japanese_indigo">#FF1B3A52</color>
+    <color name="japanese_indigo_medium">#FF264653</color>
+    <color name="japanese_indigo_light">#FF3A5A7C</color>
+
+    <!-- Temple Gold (金色) Palette -->
+    <color name="temple_gold_bright">#FFFFD700</color>
+    <color name="temple_gold">#FFFFC107</color>
+    <color name="temple_gold_dark">#FFCC9500</color>
+    <color name="temple_gold_accent">#FFFFE082</color>
+
+    <!-- Supporting Colors -->
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="error_red">#FFFF6B6B</color>
+    <color name="success_green">#FF51CF66</color>
+
+    <!-- Legacy colors for compatibility -->
     <color name="purple_200">#FFBB86FC</color>
     <color name="purple_500">#FF6200EE</color>
     <color name="purple_700">#FF3700B3</color>
     <color name="teal_200">#FF03DAC5</color>
     <color name="teal_700">#FF018786</color>
-    <color name="black">#FF000000</color>
-    <color name="white">#FFFFFFFF</color>
 </resources>
